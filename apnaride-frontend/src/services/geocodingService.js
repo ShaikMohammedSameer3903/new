@@ -97,7 +97,8 @@ export const getCurrentLocation = () => {
                 (position) => {
                     resolve({
                         lat: position.coords.latitude,
-                        lng: position.coords.longitude
+                        lng: position.coords.longitude,
+                        accuracy: position.coords.accuracy
                     });
                 },
                 (error) => {
@@ -107,13 +108,13 @@ export const getCurrentLocation = () => {
             );
         };
 
-        // First attempt: moderate settings
+        // First attempt: fresh high-accuracy reading (avoid stale cached locations)
         tryOnce(
-            { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 },
+            { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
             (err) => {
-                // Retry once with longer timeout
+                // Retry once with lower accuracy but longer timeout
                 if (err && typeof err === 'object' && 'code' in err && err.code === 3) {
-                    tryOnce({ enableHighAccuracy: false, timeout: 30000, maximumAge: 120000 });
+                    tryOnce({ enableHighAccuracy: false, timeout: 30000, maximumAge: 60000 });
                 } else {
                     reject(err);
                 }

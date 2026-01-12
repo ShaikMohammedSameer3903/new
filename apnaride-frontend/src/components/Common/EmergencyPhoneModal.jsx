@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import '../../uber-style.css';
+import BottomSheet from '../ui/BottomSheet';
 
 const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE)
     ? import.meta.env.VITE_API_BASE
@@ -72,46 +73,16 @@ export default function EmergencyPhoneModal({ user, onClose, onSaved, required =
         setIsLoading(false);
     };
 
-    return (
-        <div
-            style={{
-                position: 'fixed',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                background: 'rgba(0, 0, 0, 0.7)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 9999,
-                padding: '20px'
-            }}
-            onClick={required ? undefined : onClose}
-        >
-            <div
-                style={{
-                    background: '#fff',
-                    borderRadius: '16px',
-                    padding: '28px',
-                    maxWidth: '520px',
-                    width: '100%',
-                    boxShadow: '0 20px 60px rgba(0,0,0,0.3)'
-                }}
-                onClick={(e) => e.stopPropagation()}
-            >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                    <h2 style={{ fontSize: '20px', fontWeight: 700, margin: 0 }}>Emergency WhatsApp Number</h2>
-                    <button
-                        onClick={required ? undefined : onClose}
-                        style={{ background: 'transparent', border: 'none', fontSize: '22px', cursor: required ? 'not-allowed' : 'pointer', color: required ? '#ccc' : '#666' }}
-                        title={required ? 'Required' : 'Close'}
-                        disabled={required}
-                    >
-                        <i className="fa-solid fa-times"></i>
-                    </button>
-                </div>
+    const canClose = !required;
 
+    return (
+        <BottomSheet
+            open={true}
+            onClose={canClose ? onClose : undefined}
+            title="Emergency WhatsApp Number"
+            showHandle
+            closeOnBackdrop={canClose}
+        >
                 <div style={{ background: '#E3F2FD', color: '#1976D2', padding: '12px', borderRadius: '10px', marginBottom: '16px', fontSize: '13px' }}>
                     <i className="fa-solid fa-circle-info" style={{ marginRight: 8 }}></i>
                     This number will receive a WhatsApp message if you or the other person taps SOS during a ride.
@@ -167,7 +138,6 @@ export default function EmergencyPhoneModal({ user, onClose, onSaved, required =
                         {isLoading ? 'Saving...' : 'Save'}
                     </button>
                 </div>
-            </div>
-        </div>
+        </BottomSheet>
     );
 }

@@ -1,30 +1,12 @@
 import React from 'react';
+import BottomSheet from '../ui/BottomSheet';
 
 export default function OtpModal({ open, otp, onChange, onVerify, onResend, onClose, loading, error, phone }) {
     if (!open) return null;
 
     return (
-        <div style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0, 0, 0, 0.6)',
-            backdropFilter: 'blur(4px)',
-            zIndex: 9999,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '20px',
-            animation: 'fadeIn 0.2s ease-out'
-        }}>
-            <div style={{
-                background: '#fff',
-                borderRadius: '20px',
-                padding: '32px',
-                width: '100%',
-                maxWidth: '440px',
-                boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
-                animation: 'slideUp 0.3s ease-out'
-            }}>
+        <BottomSheet open={open} onClose={onClose} showHandle>
+            <div style={{ padding: '24px' }}>
                 {/* Header */}
                 <div style={{
                     display: 'flex',
@@ -248,28 +230,23 @@ export default function OtpModal({ open, otp, onChange, onVerify, onResend, onCl
                         🔄 Resend Code
                     </button>
                 </div>
+                <style>{`
+                    @keyframes slideUp {
+                        from {
+                            opacity: 0;
+                            transform: translateY(20px);
+                        }
+                        to {
+                            opacity: 1;
+                            transform: translateY(0);
+                        }
+                    }
+                    @keyframes spin {
+                        from { transform: rotate(0deg); }
+                        to { transform: rotate(360deg); }
+                    }
+                `}</style>
             </div>
-
-            <style>{`
-                @keyframes fadeIn {
-                    from { opacity: 0; }
-                    to { opacity: 1; }
-                }
-                @keyframes slideUp {
-                    from {
-                        opacity: 0;
-                        transform: translateY(20px);
-                    }
-                    to {
-                        opacity: 1;
-                        transform: translateY(0);
-                    }
-                }
-                @keyframes spin {
-                    from { transform: rotate(0deg); }
-                    to { transform: rotate(360deg); }
-                }
-            `}</style>
-        </div>
+        </BottomSheet>
     );
 }

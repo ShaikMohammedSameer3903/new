@@ -138,6 +138,7 @@ export default function Login() {
 
     const handleSendOtp = async () => {
         setError('');
+        setOtpInfo(null);
         const phoneDigits = (phone || '').replace(/\D/g, '');
         if (phoneDigits.length !== 10) {
             setError('Enter a valid 10-digit mobile number');
@@ -172,40 +173,28 @@ export default function Login() {
         }
     };
 
+    const googleSigninEnabled = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_GOOGLE_SIGNIN_ENABLED)
+        ? String(import.meta.env.VITE_GOOGLE_SIGNIN_ENABLED).toLowerCase() === 'true'
+        : false;
+
+    const googleOauthUrl = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_GOOGLE_OAUTH_URL)
+        ? import.meta.env.VITE_GOOGLE_OAUTH_URL
+        : null;
+
     const handleGoogleSignin = async () => {
         setError('');
-        // Minimal stub: prompt email for now
-        const emailInput = prompt('Enter Google email (dev stub):');
-        if (!emailInput) return;
-        try {
-            const res = await fetch(`${API_BASE}/auth/google-signin`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: emailInput, name: emailInput.split('@')[0], role })
-            });
-            if (res.ok) {
-                const data = await res.json();
-                if (data.role !== role) {
-                    setError(`❌ This account is registered as a ${data.role}. Please select the correct role.`);
-                    return;
-                }
-                localStorage.setItem('user', JSON.stringify(data));
-                if (data.role === 'customer') navigate('/customer');
-                else if (data.role === 'rider') navigate('/rider');
-                else if (data.role === 'admin') navigate('/admin');
-                return;
-            }
-
-            if (res.status === 404) {
-                setError('❌ Google sign-in endpoint not found (404). Restart the Spring Boot backend so /api/auth/google-signin is registered.');
-                return;
-            }
-
-            const text = await res.text();
-            setError(text || 'Google sign-in failed');
-        } catch {
-            setError('Google sign-in failed');
+        if (!googleSigninEnabled) {
+            setError('Google sign-in is disabled for this build. Please sign in using email/password or OTP.');
+            return;
         }
+
+        if (googleOauthUrl) {
+            // Hand off to backend or Google Identity flow
+            window.location.href = googleOauthUrl;
+            return;
+        }
+
+        setError('Google sign-in is enabled but not fully configured. Please contact the site administrator.');
     };
 
     return (
@@ -464,8 +453,14 @@ export default function Login() {
                         </div>
 
                         {/* Google Sign-in */}
-                        <button type="button" onClick={handleGoogleSignin} className="modern-btn modern-btn-outline ripple" style={{ width: '100%', maxWidth: 320, display: 'block' }}>
-                            Continue with Google
+                        <button
+                            type="button"
+                            onClick={handleGoogleSignin}
+                            disabled={!googleSigninEnabled}
+                            className="modern-btn modern-btn-outline ripple"
+                            style={{ width: '100%', maxWidth: 320, display: 'block', opacity: googleSigninEnabled ? 0.85 : 0.5, cursor: googleSigninEnabled ? 'pointer' : 'not-allowed' }}
+                        >
+                            Continue with Google (coming soon)
                         </button>
                     </div>
                 </form>

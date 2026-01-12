@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
@@ -18,6 +18,7 @@ import SuccessAnimation from '../Animations/SuccessAnimation';
 import { motion, AnimatePresence } from 'framer-motion';
 import OtpModal from '../Common/OtpModal';
 import EmergencyPhoneModal from '../Common/EmergencyPhoneModal';
+import paymentIntegration from '../../services/paymentIntegration';
 
 // Fix Leaflet default icon
 delete L.Icon.Default.prototype._getIconUrl;
@@ -30,6 +31,10 @@ L.Icon.Default.mergeOptions({
 const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE)
     ? import.meta.env.VITE_API_BASE
     : '/api';
+
+const RAZORPAY_KEY = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_RAZORPAY_KEY)
+    ? import.meta.env.VITE_RAZORPAY_KEY
+    : null;
 
 // Custom marker icons
 const createCustomIcon = (color, icon = 'car') => {
@@ -127,9 +132,32 @@ export default function UberStyleRiderDashboard() {
     const [filteredRides, setFilteredRides] = useState([]);
     
     // Draggable panel state
+    const floatingCardRef = useRef(null);
     const [panelPosition, setPanelPosition] = useState({ x: null, y: 100 });
     const [isDragging, setIsDragging] = useState(false);
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+    const activePointerIdRef = useRef(null);
+
+    const clamp = (val, min, max) => Math.min(Math.max(val, min), max);
+
+    const clampPanelPosition = (pos) => {
+        const el = floatingCardRef.current;
+        if (!el) return pos;
+
+        const w = el.offsetWidth || 0;
+        const h = el.offsetHeight || 0;
+
+        const margin = 12;
+        const minX = margin;
+        const maxX = Math.max(margin, window.innerWidth - w - margin);
+        const minY = 56;
+        const maxY = Math.max(minY, window.innerHeight - h - margin);
+
+        return {
+            x: pos.x === null ? null : clamp(pos.x, minX, maxX),
+            y: clamp(pos.y, minY, maxY)
+        };
+    };
     
     // Chat
     const [chatMessages, setChatMessages] = useState([]);
@@ -147,6 +175,8 @@ export default function UberStyleRiderDashboard() {
     const [otpModalOpen, setOtpModalOpen] = useState(false);
     const [otpInput, setOtpInput] = useState('');
     const [otpLoading, setOtpLoading] = useState(false);
+
+    const ACTIVE_RIDE_KEY = 'activeRide_rider';
 
     async function loadDriverData(userId) {
         if (!userId) {
@@ -252,29 +282,123 @@ export default function UberStyleRiderDashboard() {
         };
     }, [navigate]);
 
+    // Rehydrate active ride after refresh
+    useEffect(() => {
+        if (!user?.id) return;
+        let cancelled = false;
+        const bookingId = (() => {
+            try { return localStorage.getItem(ACTIVE_RIDE_KEY); } catch { return null; }
+        })();
+        if (!bookingId) return;
+
+        (async () => {
+            try {
+                const res = await fetch(`${API_BASE}/rides/${bookingId}`);
+                if (!res.ok) return;
+                const ride = await res.json();
+                if (cancelled) return;
+                if (!ride || !ride.bookingId) return;
+                const status = (ride.status || '').toUpperCase();
+                if (status === 'CANCELLED' || status === 'COMPLETED') {
+                    try { localStorage.removeItem(ACTIVE_RIDE_KEY); } catch {}
+                    return;
+                }
+                setCurrentRide(ride);
+                setCurrentStatus('on_trip');
+                addNotification('Resumed your active ride', 'info');
+            } catch (e) {
+                console.warn('Failed to rehydrate active ride (rider)', e);
+            }
+        })();
+
+        return () => { cancelled = true; };
+    }, [user?.id]);
+
+    useEffect(() => {
+        const placePanelForMobile = () => {
+            const el = floatingCardRef.current;
+            if (!el) return;
+
+            if (window.innerWidth <= 768 && panelPosition.x === null) {
+                const w = el.offsetWidth || 360;
+                const h = el.offsetHeight || 320;
+                const margin = 12;
+                const x = Math.max(margin, window.innerWidth - w - margin);
+                const y = Math.max(56, window.innerHeight - h - 120);
+                setPanelPosition(clampPanelPosition({ x, y }));
+            } else {
+                setPanelPosition((prev) => clampPanelPosition(prev));
+            }
+        };
+
+        const t = setTimeout(placePanelForMobile, 0);
+        window.addEventListener('resize', placePanelForMobile);
+        return () => {
+            clearTimeout(t);
+            window.removeEventListener('resize', placePanelForMobile);
+        };
+    }, [panelPosition.x]);
+
     // Settings removed; strict filters enabled by default
 
-    // Update location periodically when online or during an active ride
+    // Live location: use watchPosition for smoother real-time updates when online or during an active ride
     useEffect(() => {
-        if ((isOnline || !!currentRide) && user && user.id) {
-            const interval = setInterval(() => {
-                getCurrentLocation()
-                    .then(coords => {
-                        setCurrentLocation([coords.lat, coords.lng]);
-                        // Send location update to server
-                        webSocketService.sendLocationUpdate(user.id, {
-                            lat: coords.lat,
-                            lng: coords.lng,
-                            heading: 0,
-                            speed: 0
-                        });
-                    })
-                    .catch(err => console.log('Location error:', err));
-            }, 10000); // Update every 10 seconds
-            
-            return () => clearInterval(interval);
+        if (!(isOnline || !!currentRide) || !user?.id) return;
+
+        let watchId = null;
+        let cancelled = false;
+        let lastSentAt = 0;
+
+        const send = (coords) => {
+            if (cancelled) return;
+            const now = Date.now();
+            // throttle to 1 update / 2s to avoid spamming
+            if (now - lastSentAt < 2000) return;
+            lastSentAt = now;
+
+            try {
+                setCurrentLocation([coords.latitude, coords.longitude]);
+                webSocketService.sendLocationUpdate(user.id, {
+                    lat: coords.latitude,
+                    lng: coords.longitude,
+                    heading: coords.heading || 0,
+                    speed: coords.speed || 0
+                });
+            } catch (e) {
+                console.warn('Failed to send live location', e);
+            }
+        };
+
+        // Start watchPosition
+        try {
+            if (navigator?.geolocation?.watchPosition) {
+                watchId = navigator.geolocation.watchPosition(
+                    (pos) => send(pos.coords),
+                    (err) => {
+                        console.warn('watchPosition error, falling back to periodic location:', err);
+                    },
+                    { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 }
+                );
+            }
+        } catch (e) {
+            console.warn('watchPosition init failed', e);
         }
-    }, [isOnline, currentRide, user]);
+
+        // Fallback: periodic getCurrentLocation in case watchPosition is blocked
+        const interval = setInterval(() => {
+            getCurrentLocation()
+                .then((c) => {
+                    send({ latitude: c.lat, longitude: c.lng, heading: 0, speed: 0 });
+                })
+                .catch(() => {});
+        }, 5000);
+
+        return () => {
+            cancelled = true;
+            try { clearInterval(interval); } catch {}
+            try { if (watchId != null) navigator.geolocation.clearWatch(watchId); } catch {}
+        };
+    }, [isOnline, currentRide, user?.id]);
 
     // Poll for nearby rides when online
     useEffect(() => {
@@ -354,14 +478,22 @@ export default function UberStyleRiderDashboard() {
                 if (preferences.minFare) url += `&minFare=${preferences.minFare}`;
             }
             
-            const response = await fetch(url);
+            const response = await fetch(url, { credentials: 'include' });
             if (response.ok) {
                 let rides = await response.json();
                 console.log('Nearby rides fetched:', rides.length);
+
+                // Prefer showing matching vehicle type first, but do not hide rides
+                // (strict filtering can make the UI look broken if backend uses different labels)
                 if (driver?.vehicleType) {
                     const myType = String(driver.vehicleType).toLowerCase();
-                    rides = rides.filter(r => String(r.vehicleType || '').toLowerCase() === myType);
+                    rides = [...rides].sort((a, b) => {
+                        const am = String(a?.vehicleType || '').toLowerCase() === myType ? 0 : 1;
+                        const bm = String(b?.vehicleType || '').toLowerCase() === myType ? 0 : 1;
+                        return am - bm;
+                    });
                 }
+
                 setNearbyRides(rides);
                 setFilteredRides(rides);
                 
@@ -388,7 +520,8 @@ export default function UberStyleRiderDashboard() {
     // Filter rides based on search query and exclude declined rides
     useEffect(() => {
         // First, filter out declined rides
-        const availableRides = nearbyRides.filter(ride => !declinedRides.includes(ride.bookingId));
+        const declinedSet = new Set((declinedRides || []).map(x => String(x)));
+        const availableRides = (nearbyRides || []).filter(ride => !declinedSet.has(String(ride.bookingId)));
         
         if (!searchQuery.trim()) {
             setFilteredRides(availableRides);
@@ -433,6 +566,7 @@ export default function UberStyleRiderDashboard() {
                 setCurrentRide(null);
                 setCurrentStatus(isOnline ? 'online' : 'offline');
                 setRouteCoords(null);
+                try { localStorage.removeItem(ACTIVE_RIDE_KEY); } catch {}
                 return;
             }
 
@@ -446,6 +580,7 @@ export default function UberStyleRiderDashboard() {
                 setCurrentRide(null);
                 setCurrentStatus(isOnline ? 'online' : 'offline');
                 setRouteCoords(null);
+                try { localStorage.removeItem(ACTIVE_RIDE_KEY); } catch {}
             }
         } catch (e) {
             console.warn('Failed to handle ride update event', e);
@@ -491,6 +626,7 @@ export default function UberStyleRiderDashboard() {
 
         const newStatus = !isOnline;
         setIsOnline(newStatus);
+        setCurrentStatus(newStatus ? 'online' : 'offline');
         
         try {
             await fetch(`${API_BASE}/drivers/${user.id}/status`, {
@@ -498,11 +634,13 @@ export default function UberStyleRiderDashboard() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ isOnline: newStatus })
             });
-            
-            setCurrentStatus(newStatus ? 'online' : 'offline');
             addNotification(newStatus ? 'You are now online' : 'You are now offline');
         } catch (error) {
             console.error('Error updating status:', error);
+            // rollback optimistic UI
+            setIsOnline(!newStatus);
+            setCurrentStatus(!newStatus ? 'online' : 'offline');
+            addNotification('Failed to update online status. Please try again.', 'error');
         }
     };
 
@@ -537,6 +675,7 @@ export default function UberStyleRiderDashboard() {
                     setTimeout(() => {
                         setCurrentRide(acceptedRide);
                         setCurrentStatus('on_trip');
+                        try { if (acceptedRide?.bookingId) localStorage.setItem(ACTIVE_RIDE_KEY, acceptedRide.bookingId); } catch {}
                         // Center map to destination on trip start
                         try {
                             const dropLat = acceptedRide.dropLat || acceptedRide.dropLatitude;
@@ -571,6 +710,7 @@ export default function UberStyleRiderDashboard() {
                             const acceptedRide = details.ride || details;
                             setCurrentRide(acceptedRide);
                             setCurrentStatus('on_trip');
+                            try { if (acceptedRide?.bookingId) localStorage.setItem(ACTIVE_RIDE_KEY, acceptedRide.bookingId); } catch {}
                             try {
                                 const dropLat = acceptedRide.dropLat || acceptedRide.dropLatitude;
                                 const dropLng = acceptedRide.dropLng || acceptedRide.dropLongitude;
@@ -604,6 +744,7 @@ export default function UberStyleRiderDashboard() {
         if (!acceptedRide || !acceptedRide.bookingId) return;
         setCurrentRide(acceptedRide);
         setCurrentStatus('on_trip');
+        try { localStorage.setItem(ACTIVE_RIDE_KEY, acceptedRide.bookingId); } catch {}
         try {
             const dropLat = acceptedRide.dropLat || acceptedRide.dropLatitude;
             const dropLng = acceptedRide.dropLng || acceptedRide.dropLongitude;
@@ -637,7 +778,12 @@ export default function UberStyleRiderDashboard() {
     };
 
     const handleStartRide = async () => {
-        if (!currentRide) return;
+        if (!currentRide) {
+            addNotification('No active ride to start. Please accept a ride first.', 'warning');
+            return;
+        }
+
+        // Let the backend enforce the exact allowed status; always show the OTP sheet
         setOtpModalOpen(true);
     };
 
@@ -650,11 +796,21 @@ export default function UberStyleRiderDashboard() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ otp: otpInput })
             });
-            if (!res.ok) {
-                addNotification('Incorrect OTP. Please try again.', 'error');
+
+            if (res.status === 404) {
+                addNotification('OTP verification endpoint not found (404). Please start/restart the backend on port 9031.', 'error');
                 setOtpLoading(false);
                 return;
             }
+
+            const payload = await res.json().catch(() => null);
+            if (!res.ok) {
+                const msg = payload?.message || payload?.error || 'Incorrect OTP. Please try again.';
+                addNotification(msg, 'error');
+                setOtpLoading(false);
+                return;
+            }
+
             await fetch(`${API_BASE}/rides/${currentRide.bookingId}/start`, { method: 'POST' }).catch(() => {});
             addNotification('OTP verified. Ride started!', 'success');
             setOtpModalOpen(false);
@@ -688,6 +844,7 @@ export default function UberStyleRiderDashboard() {
             setCurrentRide(null);
             setCurrentStatus('online');
             setRouteCoords(null);
+            try { localStorage.removeItem(ACTIVE_RIDE_KEY); } catch {}
             
             // Reload earnings
             loadEarnings(user.id);
@@ -714,6 +871,7 @@ export default function UberStyleRiderDashboard() {
                 setCurrentRide(null);
                 setCurrentStatus('online');
                 setRouteCoords(null);
+                try { localStorage.removeItem(ACTIVE_RIDE_KEY); } catch {}
             } else {
                 addNotification('Failed to cancel trip', 'error');
             }
@@ -1344,6 +1502,7 @@ export default function UberStyleRiderDashboard() {
             {currentStatus !== 'on_trip' && (
                 <div 
                     className="uber-floating-card uber-fade-in"
+                    ref={floatingCardRef}
                     style={{
                         position: 'fixed',
                         right: panelPosition.x === null ? '20px' : 'auto',
@@ -1351,27 +1510,56 @@ export default function UberStyleRiderDashboard() {
                         top: `${panelPosition.y}px`,
                         cursor: isDragging ? 'grabbing' : 'grab',
                         zIndex: 1001,
-                        userSelect: 'none'
+                        userSelect: 'none',
+                        touchAction: 'none'
                     }}
-                    onMouseDown={(e) => {
-                        if (e.target.tagName !== 'BUTTON' && e.target.tagName !== 'I') {
-                            setIsDragging(true);
-                            setDragStart({
-                                x: e.clientX - (panelPosition.x || window.innerWidth - e.currentTarget.offsetWidth - 20),
-                                y: e.clientY - panelPosition.y
-                            });
-                        }
+                    onPointerDown={(e) => {
+                        const tag = (e.target?.tagName || '').toUpperCase();
+                        if (tag === 'BUTTON' || tag === 'I' || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+                        activePointerIdRef.current = e.pointerId;
+                        try {
+                            e.currentTarget.setPointerCapture(e.pointerId);
+                        } catch {}
+
+                        setIsDragging(true);
+
+                        const fallbackX = window.innerWidth - e.currentTarget.offsetWidth - 20;
+                        const currentX = panelPosition.x === null ? fallbackX : panelPosition.x;
+
+                        setDragStart({
+                            x: e.clientX - currentX,
+                            y: e.clientY - panelPosition.y
+                        });
                     }}
-                    onMouseMove={(e) => {
-                        if (isDragging) {
-                            setPanelPosition({
+                    onPointerMove={(e) => {
+                        if (!isDragging) return;
+                        if (activePointerIdRef.current !== e.pointerId) return;
+
+                        e.preventDefault();
+                        setPanelPosition(
+                            clampPanelPosition({
                                 x: e.clientX - dragStart.x,
                                 y: e.clientY - dragStart.y
-                            });
-                        }
+                            })
+                        );
                     }}
-                    onMouseUp={() => setIsDragging(false)}
-                    onMouseLeave={() => setIsDragging(false)}
+                    onPointerUp={(e) => {
+                        if (activePointerIdRef.current !== e.pointerId) return;
+                        activePointerIdRef.current = null;
+                        setIsDragging(false);
+                        try {
+                            e.currentTarget.releasePointerCapture(e.pointerId);
+                        } catch {}
+                    }}
+                    onPointerCancel={(e) => {
+                        if (activePointerIdRef.current !== e.pointerId) return;
+                        activePointerIdRef.current = null;
+                        setIsDragging(false);
+                        try {
+                            e.currentTarget.releasePointerCapture(e.pointerId);
+                        } catch {}
+                    }}
                 >
                     <div className="uber-earnings-card" style={{ marginBottom: '20px', position: 'relative' }}>
                         {/* Drag Handle Indicator */}
@@ -1793,6 +1981,38 @@ export default function UberStyleRiderDashboard() {
                             ₹{(currentRide.fare * 0.8).toFixed(2)}
                         </span>
                     </div>
+
+                    {/* Payment (Rider) */}
+                    <button
+                        className="uber-btn uber-btn-primary"
+                        style={{ width: '100%', marginBottom: '12px' }}
+                        disabled={!RAZORPAY_KEY}
+                        onClick={async () => {
+                            try {
+                                if (!currentRide?.bookingId) {
+                                    addNotification('Missing booking ID for payment', 'error');
+                                    return;
+                                }
+                                const amt = Number(currentRide?.fare || 0);
+                                if (!amt) {
+                                    addNotification('Invalid fare amount', 'error');
+                                    return;
+                                }
+                                const res = await paymentIntegration.initiateRazorpayPayment(
+                                    currentRide.bookingId,
+                                    amt,
+                                    currentRide.customerId || currentRide.customer?.id || null
+                                );
+                                if (res?.success) addNotification('Payment started', 'success');
+                                else addNotification(res?.error || 'Payment start failed', 'error');
+                            } catch (e) {
+                                console.error(e);
+                                addNotification('Payment start failed', 'error');
+                            }
+                        }}
+                    >
+                        Pay with Razorpay
+                    </button>
 
                     {/* Actions */}
                     <button

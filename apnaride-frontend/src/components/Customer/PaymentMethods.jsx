@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import '../../modern-design-system.css';
+import BottomSheet from '../ui/BottomSheet';
 
 const PAYMENT_METHODS = [
     { id: 'cash', name: 'Cash', icon: 'fa-money-bill-wave', color: 'green' },
@@ -80,10 +81,20 @@ export default function PaymentMethods({ onPaymentSelect, selectedMethod }) {
 
             {/* Add Card Modal */}
             {showAddCard && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-                        <h3 className="text-xl font-bold mb-4">Add New Card</h3>
-                        <form className="space-y-4">
+                <BottomSheet
+                    open={true}
+                    onClose={() => setShowAddCard(false)}
+                    title="Add New Card"
+                    showHandle
+                    closeOnBackdrop
+                >
+                        <form
+                            className="space-y-4"
+                            onSubmit={(e) => {
+                                e.preventDefault();
+                                setShowAddCard(false);
+                            }}
+                        >
                             <div>
                                 <label className="block text-sm font-semibold mb-2">Card Number</label>
                                 <input
@@ -137,8 +148,7 @@ export default function PaymentMethods({ onPaymentSelect, selectedMethod }) {
                                 </button>
                             </div>
                         </form>
-                    </div>
-                </div>
+                </BottomSheet>
             )}
         </div>
     );

@@ -24,7 +24,6 @@ public class GoogleAuthController {
     public ResponseEntity<?> googleSignin(@RequestBody Map<String, String> payload) {
         String email = payload.getOrDefault("email", "");
         String name = payload.getOrDefault("name", "");
-        String role = payload.getOrDefault("role", "customer");
         if (email == null || email.isBlank()) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Email is required");
         }
@@ -33,7 +32,7 @@ public class GoogleAuthController {
             User u = new User();
             u.setEmail(email);
             u.setName(name != null && !name.isBlank() ? name : email.split("@")[0]);
-            u.setRole(role);
+            u.setRole("customer");
             u.setPassword("");
             return userRepository.save(u);
         });

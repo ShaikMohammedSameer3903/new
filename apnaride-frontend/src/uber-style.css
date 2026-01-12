@@ -771,6 +771,11 @@
         width: calc(100% - 40px);
     }
 
+    .uber-floating-card {
+        width: calc(100% - 24px);
+        max-width: 420px;
+    }
+
     .uber-floating-card-left,
     .uber-floating-card-right {
         left: 20px;

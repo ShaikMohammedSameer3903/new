@@ -4,6 +4,7 @@ import com.apnaride.model.User;
 import com.apnaride.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
@@ -16,6 +17,9 @@ public class AdminInitializer implements CommandLineRunner {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
 
     @Override
     public void run(String... args) {
@@ -31,7 +35,10 @@ public class AdminInitializer implements CommandLineRunner {
         }
 
         admin.setRole("admin");
-        admin.setPassword(ADMIN_PASSWORD);
+        // Always ensure admin password is stored encoded
+        if (admin.getPassword() == null || admin.getPassword().isBlank() || !admin.getPassword().startsWith("$2")) {
+            admin.setPassword(passwordEncoder.encode(ADMIN_PASSWORD));
+        }
 
         userRepository.save(admin);
     }

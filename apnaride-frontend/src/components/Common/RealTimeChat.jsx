@@ -5,6 +5,13 @@ const RealTimeChat = ({ rideId, userId, userName, userType = 'rider', showHeader
     const [messages, setMessages] = useState([]);
     const [newMessage, setNewMessage] = useState('');
     const messagesEndRef = useRef(null);
+    const seenRef = useRef(new Set());
+
+    const makeKey = (m) => {
+        const id = m?.clientMessageId || m?.messageId || m?.id;
+        if (id != null) return String(id);
+        return `${m?.senderId || ''}|${m?.timestamp || ''}|${m?.message || m?.text || ''}`;
+    };
 
     useEffect(() => {
         let sub = null;
@@ -16,16 +23,22 @@ const RealTimeChat = ({ rideId, userId, userName, userType = 'rider', showHeader
         (async () => {
             await ensureConnected();
             sub = webSocketService.subscribeToChat(rideId, (message) => {
-                // Ignore echo of my own messages to avoid duplicates
-                if (message.senderId === userId) return;
+                const key = makeKey(message);
+                if (seenRef.current.has(key)) return;
+                seenRef.current.add(key);
+
+                // If server echoes the message back, we can safely ignore it if we already added it locally
+                if (message.senderId === userId && message.clientMessageId) return;
+
                 setMessages(prev => [...prev, {
-                    id: Date.now(),
+                    id: key,
                     rideId: message.rideId || rideId,
                     senderId: message.senderId,
                     senderName: message.senderName || (message.senderId === userId ? 'You' : 'User'),
                     senderType: message.senderType,
                     text: message.message || message.text,
-                    timestamp: message.timestamp || new Date().toISOString()
+                    timestamp: message.timestamp || new Date().toISOString(),
+                    clientMessageId: message.clientMessageId
                 }]);
             });
         })();
@@ -45,22 +58,39 @@ const RealTimeChat = ({ rideId, userId, userName, userType = 'rider', showHeader
         e.preventDefault();
         if (!newMessage.trim()) return;
 
+        const timestamp = new Date().toISOString();
+        const clientMessageId = `${userId}-${timestamp}-${Math.random().toString(16).slice(2)}`;
+
         const message = {
-            id: Date.now(),
+            id: clientMessageId,
             rideId,
             senderId: userId,
             senderName: userName,
             senderType: userType,
             text: newMessage,
-            timestamp: new Date().toISOString()
+            timestamp,
+            clientMessageId
         };
+
+        const key = makeKey({ senderId: userId, timestamp, text: newMessage, clientMessageId });
+        if (!seenRef.current.has(key)) seenRef.current.add(key);
 
         if (!webSocketService.isConnected()) {
             webSocketService.connect(() => {
-                webSocketService.sendChatMessage(rideId, userId, newMessage);
+                webSocketService.sendChatMessage(rideId, userId, newMessage, {
+                    senderName: userName,
+                    senderType: userType,
+                    clientMessageId,
+                    timestamp
+                });
             });
         } else {
-            webSocketService.sendChatMessage(rideId, userId, newMessage);
+            webSocketService.sendChatMessage(rideId, userId, newMessage, {
+                senderName: userName,
+                senderType: userType,
+                clientMessageId,
+                timestamp
+            });
         }
 
         setMessages(prev => [...prev, message]);

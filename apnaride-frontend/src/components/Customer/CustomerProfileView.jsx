@@ -5,6 +5,7 @@ import AnimatedBackground from '../3D/AnimatedBackground';
 import { pageVariants, containerVariants, itemVariants } from '../../config/animations';
 import '../../modern-animations.css';
 import '../../uber-style.css';
+import { MobileBottomNav } from '../ui';
 
 const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE)
     ? import.meta.env.VITE_API_BASE
@@ -113,7 +114,7 @@ export default function CustomerProfileView() {
             animate="animate"
             exit="exit"
             variants={pageVariants}
-            style={{ minHeight: '100vh', background: '#f5f7fa', position: 'relative' }}
+            style={{ minHeight: '100vh', background: '#f5f7fa', position: 'relative', paddingBottom: '84px' }}
         >
             <AnimatedBackground variant="customer" />
             {/* Header */}
@@ -485,6 +486,7 @@ export default function CustomerProfileView() {
                 </div>
                 </AnimatePresence>
             </div>
+            <MobileBottomNav />
         </motion.div>
     );
 }

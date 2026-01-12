@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import '../../uber-style.css';
+import BottomSheet from '../ui/BottomSheet';
 
 const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE)
     ? import.meta.env.VITE_API_BASE
@@ -68,35 +69,13 @@ export default function EditProfileModal({ user, onClose, onUpdate }) {
     };
 
     return (
-        <div 
-            style={{
-                position: 'fixed',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                background: 'rgba(0, 0, 0, 0.7)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 9999,
-                padding: '20px'
-            }}
-            onClick={onClose}
+        <BottomSheet
+            open={true}
+            onClose={onClose}
+            title="Edit Profile"
+            showHandle
+            closeOnBackdrop
         >
-            <div 
-                style={{
-                    background: '#fff',
-                    borderRadius: '16px',
-                    padding: '32px',
-                    maxWidth: '500px',
-                    width: '100%',
-                    maxHeight: '90vh',
-                    overflowY: 'auto',
-                    boxShadow: '0 20px 60px rgba(0,0,0,0.3)'
-                }}
-                onClick={(e) => e.stopPropagation()}
-            >
                 {/* Header */}
                 <div style={{ 
                     display: 'flex', 
@@ -327,7 +306,6 @@ export default function EditProfileModal({ user, onClose, onUpdate }) {
                         </button>
                     </div>
                 </form>
-            </div>
-        </div>
+        </BottomSheet>
     );
 }

@@ -5,12 +5,23 @@ const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env && impor
     ? import.meta.env.VITE_API_BASE
     : '/api';
 
+const RAZORPAY_KEY = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_RAZORPAY_KEY)
+    ? import.meta.env.VITE_RAZORPAY_KEY
+    : null;
+
 class PaymentIntegrationService {
     /**
      * Initialize Razorpay payment
      */
     async initiateRazorpayPayment(rideId, amount, customerId) {
         try {
+            if (!RAZORPAY_KEY) {
+                return { success: false, error: 'Razorpay key not configured (VITE_RAZORPAY_KEY).' };
+            }
+            if (!window.Razorpay) {
+                return { success: false, error: 'Razorpay SDK not loaded. Add the Razorpay checkout script to index.html.' };
+            }
+
             // Create payment intent on backend
             const response = await fetch(`${API_BASE}/payments/create-intent`, {
                 method: 'POST',
@@ -32,16 +43,22 @@ class PaymentIntegrationService {
 
             // Initialize Razorpay (requires Razorpay SDK loaded in HTML)
             if (window.Razorpay) {
+                const self = this;
                 const options = {
-                    key: 'YOUR_RAZORPAY_KEY', // Replace with actual key
+                    key: RAZORPAY_KEY,
                     amount: amount * 100, // Amount in paise
                     currency: 'INR',
                     name: 'ApnaRide',
                     description: `Payment for Ride #${rideId}`,
                     order_id: data.transactionId,
-                    handler: function (response) {
+                    handler: async (response) => {
                         // Payment successful
-                        return this.verifyPayment(response);
+                        try {
+                            return await self.verifyPayment(response);
+                        } catch (e) {
+                            console.error('Payment verification failed:', e);
+                            return { success: false, error: 'Payment verification failed' };
+                        }
                     },
                     prefill: {
                         name: data.customerName,

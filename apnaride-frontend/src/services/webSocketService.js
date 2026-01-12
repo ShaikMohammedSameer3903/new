@@ -8,11 +8,28 @@ class WebSocketService {
         this.connecting = false;
         this.subscriptions = {};
         this.pendingSubs = [];
+        this.pendingSends = [];
     }
 
     connect(onConnected, onError) {
-        if (this.connected || this.connecting) {
-            if (this.connected && onConnected) onConnected();
+        if (this.connected) {
+            if (onConnected) onConnected();
+            return;
+        }
+
+        if (this.connecting) {
+            const start = Date.now();
+            const t = setInterval(() => {
+                if (this.connected) {
+                    clearInterval(t);
+                    if (onConnected) onConnected();
+                    return;
+                }
+                if (Date.now() - start > 10000) {
+                    clearInterval(t);
+                    if (onError) onError(new Error('WebSocket connect timeout'));
+                }
+            }, 250);
             return;
         }
 
@@ -43,6 +60,15 @@ class WebSocketService {
                 } finally {
                     this.pendingSubs = [];
                 }
+
+                // flush any pending sends
+                try {
+                    (this.pendingSends || []).forEach((fn) => {
+                        try { fn(); } catch {}
+                    });
+                } finally {
+                    this.pendingSends = [];
+                }
                 if (onConnected) onConnected();
             },
             (error) => {
@@ -56,114 +82,135 @@ class WebSocketService {
 
     disconnect() {
         if (this.stompClient && this.connected) {
+            try { this.unsubscribeAll(); } catch {}
             this.stompClient.disconnect();
             this.connected = false;
+            this.connecting = false;
+            this.pendingSubs = [];
+            this.pendingSends = [];
             console.log('WebSocket Disconnected');
         }
+    }
+
+    _queueSub(dest, cb, key) {
+        // prevent duplicates when connect() is called multiple times
+        this.pendingSubs = (this.pendingSubs || []).filter(p => p.key !== key);
+        this.pendingSubs.push({ dest, cb, key });
+    }
+
+    _replaceSub(key, dest, callback) {
+        if (this.subscriptions[key]) {
+            try { this.subscriptions[key].unsubscribe(); } catch {}
+            delete this.subscriptions[key];
+        }
+
+        if (!this.connected) {
+            console.warn('WebSocket not connected yet, queuing subscription', dest);
+            this._queueSub(dest, callback, key);
+            return null;
+        }
+
+        const subscription = this.stompClient.subscribe(dest, (message) => {
+            const data = JSON.parse(message.body);
+            callback(data);
+        });
+        this.subscriptions[key] = subscription;
+        return subscription;
     }
 
     // Subscribe to ride updates for a specific user
     subscribeToRideUpdates(userId, callback) {
         const dest = `/topic/ride-updates/${userId}`;
         const key = `ride-${userId}`;
-        if (!this.connected) {
-            console.warn('WebSocket not connected yet, queuing subscription', dest);
-            this.pendingSubs.push({ dest, cb: callback, key });
-            return null;
-        }
-
-        const subscription = this.stompClient.subscribe(dest, (message) => {
-            const data = JSON.parse(message.body);
-            callback(data);
-        });
-
-        this.subscriptions[key] = subscription;
-        return subscription;
+        return this._replaceSub(key, dest, callback);
     }
 
     // Subscribe to driver location updates
     subscribeToDriverLocation(driverId, callback) {
         const dest = `/topic/driver-location/${driverId}`;
         const key = `driver-${driverId}`;
-        if (!this.connected) {
-            console.warn('WebSocket not connected yet, queuing subscription', dest);
-            this.pendingSubs.push({ dest, cb: callback, key });
-            return null;
-        }
+        return this._replaceSub(key, dest, callback);
+    }
 
-        const subscription = this.stompClient.subscribe(dest, (message) => {
-            const data = JSON.parse(message.body);
-            callback(data);
-        });
-
-        this.subscriptions[key] = subscription;
-        return subscription;
+    // Some backends publish driver location per ride/booking instead of per driver
+    subscribeToDriverLocationByRide(bookingId, callback) {
+        const dest = `/topic/driver-location/${bookingId}`;
+        const key = `driver-ride-${bookingId}`;
+        return this._replaceSub(key, dest, callback);
     }
 
     // Subscribe to new ride requests (for drivers)
     subscribeToRideRequests(driverId, callback) {
         const dest = `/queue/ride-requests/${driverId}`;
         const key = `requests-${driverId}`;
+        return this._replaceSub(key, dest, callback);
+    }
+
+    // Subscribe to chat messages for a specific ride
+    subscribeToChat(rideId, callback) {
+        const dest = `/topic/chat/${rideId}`;
+        const key = `chat-${rideId}`;
+        if (this.subscriptions[key]) {
+            try { this.subscriptions[key].unsubscribe(); } catch {}
+            delete this.subscriptions[key];
+        }
+
         if (!this.connected) {
             console.warn('WebSocket not connected yet, queuing subscription', dest);
-            this.pendingSubs.push({ dest, cb: callback, key });
+            this._queueSub(dest, callback, key);
             return null;
         }
 
         const subscription = this.stompClient.subscribe(dest, (message) => {
-            const data = JSON.parse(message.body);
-            callback(data);
+            try {
+                const data = JSON.parse(message.body);
+                callback(data);
+            } catch (e) {
+                console.warn('Failed to parse chat message', e);
+            }
         });
 
         this.subscriptions[key] = subscription;
         return subscription;
     }
 
-    // Subscribe to chat messages for a specific ride
-    subscribeToChat(rideId, callback) {
-        if (!this.connected) {
-            console.error('WebSocket not connected');
-            return null;
-        }
-
-        const subscription = this.stompClient.subscribe(
-            `/topic/chat/${rideId}`,
-            (message) => {
-                try {
-                    const data = JSON.parse(message.body);
-                    callback(data);
-                } catch (e) {
-                    console.warn('Failed to parse chat message', e);
-                }
-            }
-        );
-
-        this.subscriptions[`chat-${rideId}`] = subscription;
-        return subscription;
-    }
-
     // Send driver location update
-    sendLocationUpdate(driverId, location) {
-        if (!this.connected) {
-            console.error('WebSocket not connected');
+    sendLocationUpdate(driverId, location, _retry = false) {
+        const payload = {
+            driverId,
+            latitude: location.lat,
+            longitude: location.lng,
+            heading: location.heading,
+            speed: location.speed
+        };
+
+        const sendNow = () => {
+            try {
+                this.stompClient.send('/app/driver-location', {}, JSON.stringify(payload));
+            } catch (e) {
+                console.warn('sendLocationUpdate failed', e);
+            }
+        };
+
+        if (this.connected) {
+            sendNow();
             return;
         }
 
-        this.stompClient.send(
-            '/app/driver-location',
-            {},
-            JSON.stringify({
-                driverId,
-                latitude: location.lat,
-                longitude: location.lng,
-                heading: location.heading,
-                speed: location.speed
-            })
-        );
+        // If not connected, queue the send and attempt to connect once.
+        this.pendingSends = this.pendingSends || [];
+        this.pendingSends.push(sendNow);
+
+        if (_retry) return;
+        this.connect(() => {
+            // queued sends will be flushed in connect()
+        }, () => {
+            // keep queued sends; next connect() attempt will flush
+        });
     }
 
     // Send chat message
-    sendChatMessage(rideId, senderId, message) {
+    sendChatMessage(rideId, senderId, message, meta = {}) {
         if (!this.connected) {
             console.error('WebSocket not connected');
             return;
@@ -175,8 +222,11 @@ class WebSocketService {
             JSON.stringify({
                 rideId,
                 senderId,
+                senderName: meta.senderName,
+                senderType: meta.senderType,
+                clientMessageId: meta.clientMessageId,
                 message,
-                timestamp: new Date().toISOString()
+                timestamp: meta.timestamp || new Date().toISOString()
             })
         );
     }
