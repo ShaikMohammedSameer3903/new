@@ -12,6 +12,24 @@ export default function EnhancedAdminDashboard() {
     const { t, language, changeLanguage } = useLanguage();
     const [user, setUser] = useState(null);
     const [activeTab, setActiveTab] = useState('overview');
+    const [pricingConfig, setPricingConfig] = useState(() => {
+        try {
+            const raw = localStorage.getItem('admin_pricing');
+            if (raw) return JSON.parse(raw);
+        } catch {}
+        return {
+            currency: 'INR',
+            vehicles: [
+                { key: 'share_auto', label: 'Share Auto', icon: 'fa-people-group', capacity: '1 seat (shared)', minFare: 25, perKm: 8, perMin: 1, bookingFee: 10, etaAdd: 2, enabled: true },
+                { key: 'bike', label: 'Bike', icon: 'fa-motorcycle', capacity: '1 seat', minFare: 30, perKm: 9, perMin: 1, bookingFee: 12, etaAdd: 0, enabled: true },
+                { key: 'auto', label: 'Auto', icon: 'fa-car-side', capacity: '1-3 seats', minFare: 40, perKm: 11, perMin: 1, bookingFee: 15, etaAdd: 1, enabled: true },
+                { key: 'share_car', label: 'Share Car', icon: 'fa-users', capacity: '1-2 seats (shared)', minFare: 35, perKm: 10, perMin: 1, bookingFee: 15, etaAdd: 2, enabled: true },
+                { key: 'mini', label: 'Mini', icon: 'fa-car', capacity: '1-3 seats', minFare: 55, perKm: 12, perMin: 1.2, bookingFee: 20, etaAdd: 0, enabled: true },
+                { key: 'sedan', label: 'Sedan', icon: 'fa-taxi', capacity: '1-4 seats', minFare: 75, perKm: 15, perMin: 1.4, bookingFee: 25, etaAdd: 1, enabled: true },
+                { key: 'xl', label: 'XL', icon: 'fa-van-shuttle', capacity: '1-6 seats', minFare: 95, perKm: 18, perMin: 1.6, bookingFee: 30, etaAdd: 2, enabled: true }
+            ]
+        };
+    });
     const [analytics, setAnalytics] = useState(null);
     const [drivers, setDrivers] = useState([]);
     const [pendingDrivers, setPendingDrivers] = useState([]);
@@ -203,6 +221,16 @@ export default function EnhancedAdminDashboard() {
         else if (activeTab === 'rides') loadRides();
     }, [activeTab]);
 
+    const handleSavePricing = () => {
+        try {
+            localStorage.setItem('admin_pricing', JSON.stringify(pricingConfig));
+            alert('Pricing saved successfully');
+        } catch (e) {
+            console.error(e);
+            alert('Failed to save pricing');
+        }
+    };
+
     const handleSignOut = () => {
         localStorage.removeItem('user');
         navigate('/login');
@@ -282,6 +310,12 @@ export default function EnhancedAdminDashboard() {
                             className={`px-4 py-2 font-semibold whitespace-nowrap ${activeTab === 'rides' ? 'text-yellow-600 border-b-2 border-yellow-600' : 'text-gray-600'}`}
                         >
                             <i className="fa-solid fa-route mr-2"></i>{t('rides')}
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('pricing')}
+                            className={`px-4 py-2 font-semibold whitespace-nowrap ${activeTab === 'pricing' ? 'text-yellow-600 border-b-2 border-yellow-600' : 'text-gray-600'}`}
+                        >
+                            Pricing
                         </button>
                         <button 
                             onClick={() => setActiveTab('analytics')}

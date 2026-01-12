@@ -220,6 +220,25 @@ function UberStyleCustomerDashboard() {
         }, 5000);
     }, []);
 
+    const getAdminPricing = useCallback(() => {
+        try {
+            const raw = localStorage.getItem('admin_pricing');
+            if (raw) return JSON.parse(raw);
+        } catch {}
+        return {
+            currency: 'INR',
+            vehicles: [
+                { key: 'share_auto', label: 'Share Auto', icon: 'fa-people-group', capacity: '1 seat (shared)', minFare: 25, perKm: 8, perMin: 1, bookingFee: 10, etaAdd: 2, enabled: true },
+                { key: 'bike', label: 'Bike', icon: 'fa-motorcycle', capacity: '1 seat', minFare: 30, perKm: 9, perMin: 1, bookingFee: 12, etaAdd: 0, enabled: true },
+                { key: 'auto', label: 'Auto', icon: 'fa-car-side', capacity: '1-3 seats', minFare: 40, perKm: 11, perMin: 1, bookingFee: 15, etaAdd: 1, enabled: true },
+                { key: 'share_car', label: 'Share Car', icon: 'fa-users', capacity: '1-2 seats (shared)', minFare: 35, perKm: 10, perMin: 1, bookingFee: 15, etaAdd: 2, enabled: true },
+                { key: 'mini', label: 'Mini', icon: 'fa-car', capacity: '1-3 seats', minFare: 55, perKm: 12, perMin: 1.2, bookingFee: 20, etaAdd: 0, enabled: true },
+                { key: 'sedan', label: 'Sedan', icon: 'fa-taxi', capacity: '1-4 seats', minFare: 75, perKm: 15, perMin: 1.4, bookingFee: 25, etaAdd: 1, enabled: true },
+                { key: 'xl', label: 'XL', icon: 'fa-van-shuttle', capacity: '1-6 seats', minFare: 95, perKm: 18, perMin: 1.6, bookingFee: 30, etaAdd: 2, enabled: true }
+            ]
+        };
+    }, []);
+
     // Keep pickup pinned to live current location whenever it changes
     useEffect(() => {
         if (!currentLocation) return;
@@ -885,70 +904,27 @@ function UberStyleCustomerDashboard() {
 
             const etaMin = Math.max(1, Math.round((route?.duration ? route.duration : (distanceKm * 180)) / 60));
 
-            const computeFare = (minFare, perKm, perMin, bookingFee = 0) => {
-                const raw = bookingFee + (distanceKm * perKm) + (etaMin * perMin);
-                return Math.max(minFare, Math.round(raw));
-            };
-
-            // Vehicle options with realistic rates
-            const vehiclesData = [
-                {
-                    type: 'Share Auto',
-                    icon: 'fa-people-group',
-                    capacity: '1 seat (shared)',
-                    eta: Math.max(2, etaMin + 2),
-                    price: computeFare(25, 8, 1, 10),
-                    description: 'Lowest cost, shared ride'
-                },
-                {
-                    type: 'Bike',
-                    icon: 'fa-motorcycle',
-                    capacity: '1 seat',
-                    eta: Math.max(2, etaMin),
-                    price: computeFare(30, 9, 1, 12),
-                    description: 'Fast and affordable'
-                },
-                {
-                    type: 'Auto',
-                    icon: 'fa-car-side',
-                    capacity: '1-3 seats',
-                    eta: Math.max(3, etaMin + 1),
-                    price: computeFare(40, 11, 1, 15),
-                    description: 'Everyday rides in auto'
-                },
-                {
-                    type: 'Share Car',
-                    icon: 'fa-users',
-                    capacity: '1-2 seats (shared)',
-                    eta: Math.max(3, etaMin + 2),
-                    price: computeFare(35, 10, 1, 15),
-                    description: 'Comfort with shared pricing'
-                },
-                {
-                    type: 'Mini',
-                    icon: 'fa-car',
-                    capacity: '1-3 seats',
-                    eta: Math.max(3, etaMin),
-                    price: computeFare(55, 12, 1.2, 20),
-                    description: 'Affordable car rides'
-                },
-                {
-                    type: 'Sedan',
-                    icon: 'fa-taxi',
-                    capacity: '1-4 seats',
-                    eta: Math.max(4, etaMin + 1),
-                    price: computeFare(75, 15, 1.4, 25),
-                    description: 'Extra comfort and space'
-                },
-                {
-                    type: 'XL',
-                    icon: 'fa-van-shuttle',
-                    capacity: '1-6 seats',
-                    eta: Math.max(5, etaMin + 2),
-                    price: computeFare(95, 18, 1.6, 30),
-                    description: 'For larger groups'
-                }
-            ];
+            const pricing = getAdminPricing();
+            const vehiclesData = (pricing?.vehicles || [])
+                .filter(v => v && v.enabled !== false)
+                .map(v => {
+                    const minFare = Number(v.minFare || 0);
+                    const perKm = Number(v.perKm || 0);
+                    const perMin = Number(v.perMin || 0);
+                    const bookingFee = Number(v.bookingFee || 0);
+                    const etaAdd = Number(v.etaAdd || 0);
+                    const raw = bookingFee + (distanceKm * perKm) + (etaMin * perMin);
+                    const price = Math.max(minFare || 0, Math.round(raw));
+                    return {
+                        key: v.key,
+                        type: v.label,
+                        icon: v.icon,
+                        capacity: v.capacity,
+                        eta: Math.max(1, etaMin + etaAdd),
+                        price,
+                        description: v.description || ''
+                    };
+                });
 
             setVehicles(vehiclesData);
             setStep('selecting');
